@@ -71,18 +71,26 @@ class ChatWindow(Tk):
         Tk.destroy(self)
 
 
+    def append_text(self, text):
+        scroll = self.chat_Text.yview()[1]
+
+        self.chat_Text.insert(END, text)
+        if scroll >= 0.99:
+            self.chat_Text.yview_moveto(1.0)
+
+
     def send_Action(self, *args):
         if not self.sock: return
 
         text = self.send_Text.get()
-        message = text.strip() + '\n'
+        text = text.strip()
 
         self.send_Text.delete(0, END)
 
-        if not message: return
+        if not text: return
+        message = text + '\n'
 
-        self.chat_Text.insert(END, timestamp() + ' me: ' + message)
-        self.chat_Text.yview_moveto(1.0)
+        self.append_text(timestamp() + ' me: ' + message)
         self.sock.sendall(message.encode())
 
 
@@ -98,15 +106,14 @@ class ChatWindow(Tk):
                 self.sock = None
             else:
                 message = str(message, encoding='utf8')
-                self.chat_Text.insert(END, timestamp() + ' them: ' + message)
-                self.chat_Text.yview_moveto(1.0)
+                self.append_text(timestamp() + ' them: ' + message)
         finally:
             if self.checker != None:
                 self.checker = self.main.after(100, self.eventChecker)
 
 
     def disable(self, message):
-        self.chat_Text.insert(END, timestamp() + ' ' + message)
+        self.append_text(timestamp() + ' ' + message)
         self.chat_Text.yview_moveto(1.0)
         self.send_Text.config(state='disabled')
         self.send_Button.config(state='disabled')
