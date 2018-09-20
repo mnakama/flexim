@@ -82,6 +82,7 @@ class ChatWindow(Tk):
         if not message: return
 
         self.chat_Text.insert(END, timestamp() + ' me: ' + message)
+        self.chat_Text.yview_moveto(1.0)
         self.sock.sendall(message.encode())
 
 
@@ -98,6 +99,7 @@ class ChatWindow(Tk):
             else:
                 message = str(message, encoding='utf8')
                 self.chat_Text.insert(END, timestamp() + ' them: ' + message)
+                self.chat_Text.yview_moveto(1.0)
         finally:
             if self.checker != None:
                 self.checker = self.main.after(100, self.eventChecker)
@@ -105,6 +107,7 @@ class ChatWindow(Tk):
 
     def disable(self, message):
         self.chat_Text.insert(END, timestamp() + ' ' + message)
+        self.chat_Text.yview_moveto(1.0)
         self.send_Text.config(state='disabled')
         self.send_Button.config(state='disabled')
 
