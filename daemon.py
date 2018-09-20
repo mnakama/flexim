@@ -5,6 +5,7 @@ import sys
 import traceback
 
 from chat import ChatWindow
+from util import Socket
 
 default_port = 9000
 
@@ -13,7 +14,7 @@ def main():
         myport = int(sys.argv[1])
     except IndexError:
         myport = default_port
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock = Socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind(('', myport))
     sock.listen()

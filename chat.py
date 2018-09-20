@@ -1,9 +1,12 @@
 import socket
+import sys
 from tkinter import *
 from tkinter.scrolledtext import ScrolledText
 import _tkinter
 
-from util import timestamp
+from util import timestamp, Socket
+
+flexim_header = b'\0FLEX'
 
 class ChatWindow(Tk):
     def __init__(self, sock=None, peer=None):
@@ -12,19 +15,26 @@ class ChatWindow(Tk):
         if sock:
             self.sock = sock
             peer = self.sock.getpeername()
+
+            header = self.sock.recv(5)
+            if header != flexim_header:
+                Socket.abort(self.sock, (b'Unrecognized protocol header\n'))
+                sys.exit(0)
+
         elif peer:
-            self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.sock = Socket(socket.AF_INET, socket.SOCK_STREAM)
             try:
                 self.sock.settimeout(5)
                 self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 self.sock.connect(peer)
                 self.sock.settimeout(None)
+                self.sock.send(flexim_header)
             except Exception as e:
                 failure = str(e)
                 self.sock = None
         else:
             raise Exception("Missing required parameter")
-        
+
         self.peer = peer
 
         Tk.__init__(self)
@@ -96,10 +106,19 @@ class ChatWindow(Tk):
 
     def eventChecker(self, *args): #could be (self, socket_fd, mask)
         try:
-            message = self.sock.recv(4096)
+            try:
+                message = self.sock.recv(4096)
+            except Exception as e:
+                self.disable(str(e) + '\n')
+
+                self.tk.deletefilehandler(self.sock)
+                self.sock.close()
+                self.sock = None
+                return
+
             print('message:', message, len(message))
             if len(message) == 0:
-                self.disable('Disconnected')
+                self.disable('Disconnected\n')
 
                 self.tk.deletefilehandler(self.sock)
                 self.sock.close()
