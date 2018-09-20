@@ -1,3 +1,4 @@
+#!/usr/bin/python3
 import multiprocessing as mp
 import socket
 import traceback
@@ -13,9 +14,7 @@ from chat import ChatWindow
 default_port = 9000
 
 class RosterWindow(Tk):
-    def __init__(self, sock):
-        self.sock = sock
-
+    def __init__(self):
         Tk.__init__(self)
         self.title('im2')
         self.main = Frame(self)
@@ -34,17 +33,6 @@ class RosterWindow(Tk):
 
         #debug
         self.host_Entry.insert(0, 'localhost:{}'.format(default_port))
-
-        if self.sock:
-            try: #this only works in linux for some reason
-                self.checker = None
-                self.tk.createfilehandler(self.sock, _tkinter.READABLE, self.eventChecker)
-
-            except: #rescue windows
-                traceback.print_exc()
-                print ('Windows mode!')
-                self.sock.setblocking(False)
-                self.checker = self.main.after(100, self.eventChecker)
 
 
     def destroy(self):
@@ -68,13 +56,11 @@ class RosterWindow(Tk):
         p.start()
 
 
-    def eventChecker(self, *args): #could be (self, socket_fd, mask)
-        try:
-            print('event!', args)
-            conn = self.sock.accept()[0]
+def main():
+    # Tk will crash if we don't set this to "spawn", because it does not like multi-threading.
+    mp.set_start_method('spawn')
+    roster = RosterWindow()
+    roster.main.mainloop()
 
-            p = mp.Process(target=ChatWindow.give_socket, args=(conn,))
-            p.start()
-        finally:
-            if self.checker != None:
-                self.checker = self.main.after(100, self.eventChecker)
+if __name__ == '__main__':
+    main()
