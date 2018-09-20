@@ -26,5 +26,8 @@ def main():
             p = mp.Process(target=ChatWindow.give_socket, args=(conn,))
             p.start()
 
+            # close our copy of the socket so the ChatWindow process can own it.
+            conn.close()
+
 if __name__ == '__main__':
     main()
