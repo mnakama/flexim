@@ -20,6 +20,13 @@ class RosterWindow(Tk):
         self.main = Frame(self)
         self.main.pack(expand=True, fill=BOTH)
 
+        self.address_Frame = Frame(self.main)
+        self.address_Frame.pack(side=TOP)
+        self.address_Label = Label(self.address_Frame, text='Your address:')
+        self.address_Label.pack(side=LEFT)
+        self.address_Entry = Entry(self.address_Frame)
+        self.address_Entry.pack(side=LEFT)
+
         self.host_Frame = Frame(self.main)
         self.host_Frame.pack(side=TOP)
         self.host_Label = Label(self.host_Frame, text='Message to "Host:Port":')
@@ -32,6 +39,7 @@ class RosterWindow(Tk):
         self.host_Button.pack(side=LEFT)
 
         #debug
+        self.address_Entry.insert(0, 'example.com:{}'.format(default_port))
         self.host_Entry.insert(0, 'localhost:{}'.format(default_port))
 
 
@@ -52,7 +60,7 @@ class RosterWindow(Tk):
             peer = (peer, int(port))
 
         print(peer)
-        p = mp.Process(target=ChatWindow.new_chat, args=(peer,))
+        p = mp.Process(target=ChatWindow.new_chat, args=(peer, self.address_Entry.get()))
         p.start()
 
 

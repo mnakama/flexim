@@ -1,6 +1,10 @@
+import json
+import msgpack
 import socket
 import sys
+import time
 from tkinter import *
+from enum import Enum
 from tkinter.scrolledtext import ScrolledText
 import _tkinter
 
@@ -8,11 +12,23 @@ from util import timestamp, Socket
 
 flexim_header = b'\0FLEX'
 
+class Mode(Enum):
+    text = 1
+    command = 2
+    json = 3
+    msgpack = 4
+
+
 class ChatWindow(Tk):
-    def __init__(self, sock=None, peer=None):
+    def __init__(self, sock=None, peer=None, address=None):
         failure = None
+        self.address = address
+        self.receive_mode = Mode.text
+        self.send_mode = Mode.text
+        self.sent_header = False
 
         if sock:
+            self.initiator = False
             self.sock = sock
             peer = self.sock.getpeername()
 
@@ -22,6 +38,7 @@ class ChatWindow(Tk):
                 sys.exit(0)
 
         elif peer:
+            self.initiator = True
             self.sock = Socket(socket.AF_INET, socket.SOCK_STREAM)
             try:
                 self.sock.settimeout(5)
@@ -98,37 +115,178 @@ class ChatWindow(Tk):
         self.send_Text.delete(0, END)
 
         if not text: return
-        message = text + '\n'
 
-        self.append_text(timestamp() + ' me: ' + message)
-        self.sock.sendall(message.encode())
+        if text == '/bye':
+            self.send_command('BYE ')
+        elif text == '/text':
+            self.send_command('TEXT')
+            self.send_mode = Mode.text
+        elif text == '/json':
+            self.send_command('JSON')
+            self.send_mode = Mode.json
+            self.send_header_once()
+        elif text == '/msgpack':
+            self.send_command('MPCK')
+            self.send_mode = Mode.msgpack
+            self.send_header_once()
+        else:
+            if self.send_mode == Mode.text:
+                message = (text + '\n').encode(encoding='utf8')
+            elif self.send_mode in (Mode.json, Mode.msgpack):
+                p = {
+                    'category': 'chat',
+                    'subject': '',
+                    'flags': [],
+                    'date': int(time.time()),
+                    'message': text,
+                }
+
+                if self.send_mode == Mode.json:
+                    message = json.dumps(p).encode(encoding='utf8')
+                elif self.send_mode == Mode.msgpack:
+                    message = msgpack.dumps(p)
+
+            self.append_text(timestamp() + ' me: ' + text + '\n')
+            self.sock.sendall(message)
+
+
+    def send_command(self, cmd):
+        if self.send_mode == Mode.text:
+            self.sock.sendall(b'\0' + cmd.encode(encoding='ascii'))
+        elif self.send_mode in (Mode.json, Mode.msgpack):
+            data = {
+                'category': 'command',
+                'flags': [],
+                'date': int(time.time()),
+                'message': str(cmd),
+            }
+
+            if self.send_mode == Mode.json:
+                message = json.dumps(data).encode(encoding='ascii')
+            elif self.send_mode == Mode.msgpack:
+                message = msgpack.dumps(data)
+
+            self.sock.sendall(message)
+
+
+    def send_header_once(self):
+        if not self.sent_header and self.initiator:
+            self.send_header()
+            self.sent_header = True
+
+
+    def send_header(self):
+        data = {
+            'to': '{}:{}'.format(self.peer[0], self.peer[1]),
+            'from': str(self.address),
+            'options': [],
+        }
+
+        if self.send_mode == Mode.json:
+            p = json.dumps(data).encode(encoding='utf8')
+            self.sock.sendall(p)
+
+        elif self.send_mode == Mode.msgpack:
+            p = msgpack.dumps(data)
+            self.sock.sendall(p)
+
+
+    def update_peer_address(self, addr):
+        self.peer_address = addr
+        self.status_Label['text'] = 'Peer: ' + addr
+
+
+    def process_header(self, header):
+        self.update_peer_address(header['from'])
+
+
+    def process_message(self, message):
+        print('loads:', message)
+
+        if 'to' in message:
+            self.process_header(message)
+
+        elif message['category'] == 'command':
+            print('command:', message['message'])
+            cmd = message['message']
+            self.process_command(cmd)
+
+        else:
+            self.append_text(timestamp() + ' them: ' + message['message'] + '\n')
+
+
+    def process_command(self, cmd, more=None):
+        if cmd == 'JSON':
+            self.unpacker = None
+            self.receive_mode = Mode.json
+
+            if more:
+                self.process_packet(more)
+
+        elif cmd == 'MPCK':
+            self.receive_mode = Mode.msgpack
+            self.unpacker = msgpack.Unpacker(raw=False)
+
+            if more:
+                self.process_packet(more)
+
+        elif cmd == 'TEXT':
+            self.unpacker = None
+            self.receive_mode = Mode.text
+
+        elif cmd == 'BYE ':
+            self.disable('Disconnecting: Bye\n')
+            self.disconnect()
+
+    def process_packet(self, packet):
+        if self.receive_mode == Mode.text:
+            p = packet.split(b'\0', 1)
+            if p[0]:
+                text = str(p[0], encoding='utf8')
+                self.append_text(timestamp() + ' them: ' + text)
+
+            if len(p) > 1:
+                cmd = p[1][:4]
+                more = p[1][4:]
+
+                self.process_command(str(cmd, encoding='ascii'), more)
+
+        elif self.receive_mode == Mode.json:
+            message = json.loads(str(packet, encoding='utf8'))
+
+            self.process_message(message)
+
+        elif self.receive_mode == Mode.msgpack:
+            self.unpacker.feed(packet)
+
+            for o in self.unpacker:
+                self.process_message(o)
 
 
     def eventChecker(self, *args): #could be (self, socket_fd, mask)
         try:
             try:
-                message = self.sock.recv(4096)
+                packet = self.sock.recv(4096)
             except Exception as e:
                 self.disable(str(e) + '\n')
-
-                self.tk.deletefilehandler(self.sock)
-                self.sock.close()
-                self.sock = None
+                self.disconnect()
                 return
 
-            print('message:', message, len(message))
-            if len(message) == 0:
+            print('packet:', packet, len(packet))
+            if len(packet) == 0:
                 self.disable('Disconnected\n')
-
-                self.tk.deletefilehandler(self.sock)
-                self.sock.close()
-                self.sock = None
+                self.disconnect()
             else:
-                message = str(message, encoding='utf8')
-                self.append_text(timestamp() + ' them: ' + message)
+                self.process_packet(packet)
         finally:
             if self.checker != None:
                 self.checker = self.main.after(100, self.eventChecker)
+
+
+    def disconnect(self):
+        self.tk.deletefilehandler(self.sock)
+        self.sock.close()
+        self.sock = None
 
 
     def disable(self, message):
@@ -146,7 +304,7 @@ class ChatWindow(Tk):
 
 
     @staticmethod
-    def new_chat(peer):
+    def new_chat(peer, address):
         print("New peer:", peer)
-        wnd = ChatWindow(peer=peer)
+        wnd = ChatWindow(peer=peer, address=address)
         wnd.main.mainloop()
