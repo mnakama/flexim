@@ -10,6 +10,7 @@ from tkinter.scrolledtext import ScrolledText
 import _tkinter
 
 from chat import ChatWindow
+from util import setup_sigchld
 
 default_port = 9000
 
@@ -67,6 +68,8 @@ class RosterWindow(Tk):
 def main():
     # Tk will crash if we don't set this to "spawn", because it does not like multi-threading.
     mp.set_start_method('spawn')
+    setup_sigchld
+
     roster = RosterWindow()
     roster.main.mainloop()
 

@@ -1,9 +1,20 @@
 import datetime
+import signal
 import socket
 import struct
+import traceback
 
 def timestamp():
     return '[' + datetime.datetime.now().strftime('%X') + ']'
+
+
+def setup_sigchld():
+    try:
+        signal.signal(signal.SIGCHLD, signal.SIG_IGN)
+    except:
+        traceback.print_exc()
+        print('Error setting SIGCHLD. Maybe this is Windows?')
+
 
 class Socket(socket.socket):
     '''Wrap the python socket.socket class with extra method(s)'''
