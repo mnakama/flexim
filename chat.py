@@ -119,8 +119,11 @@ class ChatWindow(Tk):
         self.send_Frame = Frame(self.main)
         self.send_Frame.pack(fill=X)
 
-        self.send_Text = Entry(self.send_Frame)
+        self.send_Text = Text(self.send_Frame)
         self.send_Text.pack(side=LEFT, expand=True, fill=X)
+        self.send_Text['height'] = 2
+        self.send_Text.bind('<Shift-Return>', self.send_Newline)
+        self.send_Text.bind('<Control-Return>', self.send_Newline)
         self.send_Text.bind('<Return>', self.send_Action)
         self.send_Button = Button(self.send_Frame, text='Send', command=self.send_Action)
         self.send_Button.pack(side=LEFT)
@@ -144,6 +147,12 @@ class ChatWindow(Tk):
                 self.checker = self.main.after(100, self.eventChecker)
 
 
+    def send_Newline(self, *args):
+        # Let the default handler make a newline. This exists
+        # just to prevent the send_Action handler from activating
+        pass
+
+
     def destroy(self):
         Tk.destroy(self)
 
@@ -157,14 +166,14 @@ class ChatWindow(Tk):
 
 
     def send_Action(self, *args):
-        if not self.peer.sock: return
+        if not self.peer.sock: return 'break'
 
-        text = self.send_Text.get()
+        text = self.send_Text.get('1.0', END)
         text = text.strip()
 
-        self.send_Text.delete(0, END)
+        self.send_Text.delete('1.0', END)
 
-        if not text: return
+        if not text: return 'break'
 
 
         # /me is a "social command", so it's exempt from command processing
@@ -203,6 +212,9 @@ class ChatWindow(Tk):
 
             self.append_text(timestamp() + ' me: ' + text + '\n')
             self.peer.sendall(message)
+
+        # Prevent default handler from adding a newline to the input textbox
+        return 'break'
 
 
     def send_command(self, cmd):
