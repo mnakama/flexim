@@ -19,43 +19,93 @@ class Mode(Enum):
     msgpack = 4
 
 
+class Peer():
+    def __init__(self):
+        self._name = None
+        self.nick = 'them'
+        self.host = None
+        self.port = None
+        self.sock = None
+
+
+    @property
+    def name(self):
+        if self._name:
+            return self._name
+        elif self.host and self.port:
+            host = self.host
+            port = self.port
+        else:
+            host, port = self.sock.getpeername()
+
+        return '{}:{}'.format(host, port)
+
+
+    @name.setter
+    def name(self, name):
+        self._name = name
+
+
+    def recv(self, size):
+        return self.sock.recv(size)
+
+
+    def send(self, data):
+        return self.sock.send(data)
+
+
+    def sendall(self, data):
+        return self.sock.sendall(data)
+
+
+    def connect(self):
+        self.sock = Socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            self.sock.settimeout(5)
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.sock.connect((self.host, self.port))
+            self.sock.settimeout(None)
+            self.sock.send(flexim_header)
+        except Exception as e:
+            self.sock = None
+            raise
+
+
 class ChatWindow(Tk):
     def __init__(self, sock=None, peer=None, address=None):
         failure = None
-        self.address = address
+
+        self.peer = Peer()
+        if peer:
+            self.peer.host, self.peer.port = peer
+
         self.receive_mode = Mode.text
         self.send_mode = Mode.text
         self.sent_header = False
+        self.address = address
 
         if sock:
+            self.peer.sock = sock
             self.initiator = False
-            self.sock = sock
-            peer = self.sock.getpeername()
 
-            header = self.sock.recv(5)
+            header = self.peer.recv(5)
             if header != flexim_header:
-                Socket.abort(self.sock, (b'Unrecognized protocol header\n'))
+                Socket.abort(self.peer.sock, (b'Unrecognized protocol header\n'))
+                print('Unrecognized protocol:', header)
                 sys.exit(0)
 
         elif peer:
             self.initiator = True
-            self.sock = Socket(socket.AF_INET, socket.SOCK_STREAM)
             try:
-                self.sock.settimeout(5)
-                self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                self.sock.connect(peer)
-                self.sock.settimeout(None)
-                self.sock.send(flexim_header)
+                self.peer.connect()
             except Exception as e:
                 failure = str(e)
-                self.sock = None
+
         else:
             raise Exception("Missing required parameter")
 
-        self.peer = peer
-
         Tk.__init__(self)
-        self.title('{}:{}'.format(peer[0], peer[1]))
+        self.title(self.peer.name)
 
         #self.root = Tk()
         #self.main = Frame(self.root)
@@ -75,7 +125,7 @@ class ChatWindow(Tk):
         self.send_Button = Button(self.send_Frame, text='Send', command=self.send_Action)
         self.send_Button.pack(side=LEFT)
 
-        self.status_Label = Label(self.main, text='Peer: {}:{}'.format(peer[0], peer[1]))
+        self.status_Label = Label(self.main, text='Peer: {}'.format(self.peer.name))
         self.status_Label.pack()
 
         self.send_Text.focus()
@@ -85,7 +135,7 @@ class ChatWindow(Tk):
         else:
             try: #this only works in linux for some reason
                 self.checker = None
-                self.tk.createfilehandler(self.sock, _tkinter.READABLE, self.eventChecker)
+                self.tk.createfilehandler(self.peer.sock, _tkinter.READABLE, self.eventChecker)
 
             except: #rescue windows
                 traceback.print_exc()
@@ -107,7 +157,7 @@ class ChatWindow(Tk):
 
 
     def send_Action(self, *args):
-        if not self.sock: return
+        if not self.peer.sock: return
 
         text = self.send_Text.get()
         text = text.strip()
@@ -147,12 +197,12 @@ class ChatWindow(Tk):
                     message = msgpack.dumps(p)
 
             self.append_text(timestamp() + ' me: ' + text + '\n')
-            self.sock.sendall(message)
+            self.peer.sendall(message)
 
 
     def send_command(self, cmd):
         if self.send_mode == Mode.text:
-            self.sock.sendall(b'\0' + cmd.encode(encoding='ascii'))
+            self.peer.sendall(b'\0' + cmd.encode(encoding='ascii'))
         elif self.send_mode in (Mode.json, Mode.msgpack):
             data = {
                 'category': 'command',
@@ -166,7 +216,7 @@ class ChatWindow(Tk):
             elif self.send_mode == Mode.msgpack:
                 message = msgpack.dumps(data)
 
-            self.sock.sendall(message)
+            self.peer.sendall(message)
 
 
     def send_header_once(self):
@@ -177,22 +227,22 @@ class ChatWindow(Tk):
 
     def send_header(self):
         data = {
-            'to': '{}:{}'.format(self.peer[0], self.peer[1]),
+            'to': self.peer.name,
             'from': str(self.address),
             'options': [],
         }
 
         if self.send_mode == Mode.json:
             p = json.dumps(data).encode(encoding='utf8')
-            self.sock.sendall(p)
+            self.peer.sendall(p)
 
         elif self.send_mode == Mode.msgpack:
             p = msgpack.dumps(data)
-            self.sock.sendall(p)
+            self.peer.sendall(p)
 
 
     def update_peer_address(self, addr):
-        self.peer_address = addr
+        self.peer.name = addr
         self.status_Label['text'] = 'Peer: ' + addr
 
 
@@ -212,7 +262,7 @@ class ChatWindow(Tk):
             self.process_command(cmd)
 
         else:
-            self.append_text(timestamp() + ' them: ' + message['message'] + '\n')
+            self.append_text('{} {}: {}\n'.format(timestamp(), self.peer.nick, message['message']))
 
 
     def process_command(self, cmd, more=None):
@@ -266,7 +316,7 @@ class ChatWindow(Tk):
     def eventChecker(self, *args): #could be (self, socket_fd, mask)
         try:
             try:
-                packet = self.sock.recv(4096)
+                packet = self.peer.recv(4096)
             except Exception as e:
                 self.disable(str(e) + '\n')
                 self.disconnect()
@@ -284,9 +334,9 @@ class ChatWindow(Tk):
 
 
     def disconnect(self):
-        self.tk.deletefilehandler(self.sock)
-        self.sock.close()
-        self.sock = None
+        self.tk.deletefilehandler(self.peer.sock)
+        self.peer.sock.close()
+        self.peer.sock = None
 
 
     def disable(self, message):
