@@ -166,19 +166,24 @@ class ChatWindow(Tk):
 
         if not text: return
 
-        if text == '/bye':
-            self.send_command('BYE ')
-        elif text == '/text':
-            self.send_command('TEXT')
-            self.send_mode = Mode.text
-        elif text == '/json':
-            self.send_command('JSON')
-            self.send_mode = Mode.json
-            self.send_header_once()
-        elif text == '/msgpack':
-            self.send_command('MPCK')
-            self.send_mode = Mode.msgpack
-            self.send_header_once()
+
+        # /me is a "social command", so it's exempt from command processing
+        if text[0] == '/' and not text.startswith('/me '):
+            if text == '/bye':
+                self.send_command('BYE ')
+            elif text == '/text':
+                self.send_command('TEXT')
+                self.send_mode = Mode.text
+            elif text == '/json':
+                self.send_command('JSON')
+                self.send_mode = Mode.json
+                self.send_header_once()
+            elif text == '/msgpack':
+                self.send_command('MPCK')
+                self.send_mode = Mode.msgpack
+                self.send_header_once()
+            else:
+                self.append_text('Unrecognized command: {}\n'.format(text))
         else:
             if self.send_mode == Mode.text:
                 message = (text + '\n').encode(encoding='utf8')
