@@ -68,7 +68,7 @@ class RosterWindow(Tk):
 def main():
     # Tk will crash if we don't set this to "spawn", because it does not like multi-threading.
     mp.set_start_method('spawn')
-    setup_sigchld
+    setup_sigchld()
 
     roster = RosterWindow()
     roster.main.mainloop()
