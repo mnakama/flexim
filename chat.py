@@ -11,8 +11,6 @@ import _tkinter
 from util import timestamp, Socket
 from hyperlink import Hyperlink
 
-flexim_header = b'\0FLEX'
-
 class Mode(Enum):
     text = 1
     command = 2
@@ -66,7 +64,6 @@ class Peer():
             self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             self.sock.connect((self.host, self.port))
             self.sock.settimeout(None)
-            self.sock.send(flexim_header)
         except Exception as e:
             self.sock = None
             raise
@@ -80,8 +77,7 @@ class ChatWindow(Tk):
         if peer:
             self.peer.host, self.peer.port = peer
 
-        self.receive_mode = Mode.text
-        self.send_mode = Mode.text
+        self.mode = Mode.msgpack
         self.sent_header = False
         self.address = address
 
@@ -90,15 +86,27 @@ class ChatWindow(Tk):
             self.initiator = False
 
             header = self.peer.recv(5)
-            if header != flexim_header:
+            if header[1:] != b'FLEX':
                 Socket.abort(self.peer.sock, (b'Unrecognized protocol header\n'))
                 print('Unrecognized protocol:', header)
                 sys.exit(0)
 
+            if header[0] == 0:
+                self.mode = Mode.text
+            elif header[0] == 0xa4:
+                self.mode = Mode.msgpack
+            elif header[0] == 0x22:
+                self.mode = Mode.json
+            else:
+                Socket.abort(self.peer.sock, (b'Unrecognized protocol mode\n'))
+                print('Unrecognized protocol mode:', header[0])
+                sys.exit(0)
+
+
         elif peer:
             self.initiator = True
             try:
-                self.peer.connect()
+                self.connect()
             except Exception as e:
                 failure = str(e)
 
@@ -147,6 +155,32 @@ class ChatWindow(Tk):
                 print ('Windows mode!')
                 sock.setblocking(False)
                 self.checker = self.main.after(100, self.eventChecker)
+
+
+    @property
+    def mode(self):
+        return self.receive_mode
+
+
+    @mode.setter
+    def mode(self, mode):
+        self.receive_mode = mode
+        self.send_mode = mode
+
+
+    @property
+    def receive_mode(self):
+        return self._receive_mode
+
+
+    @receive_mode.setter
+    def receive_mode(self, mode):
+        if mode == Mode.msgpack:
+            self.unpacker = msgpack.Unpacker(raw=False)
+        else:
+            self.unpacker = None
+
+        self._receive_mode = mode
 
 
     def send_Newline(self, *args):
@@ -376,6 +410,21 @@ class ChatWindow(Tk):
         finally:
             if self.checker != None:
                 self.checker = self.main.after(100, self.eventChecker)
+
+
+    def connect(self):
+        self.peer.connect()
+        if self.send_mode == Mode.msgpack:
+            header = b'\xa4FLEX'
+            self.peer.send(header)
+            self.send_header_once()
+        elif self.send_mode == Mode.json:
+            header = b'"FLEX'
+            self.peer.send(header)
+            self.send_header_once()
+        else:
+            header = b'\0FLEX'
+            self.peer.send(header)
 
 
     def disconnect(self):
