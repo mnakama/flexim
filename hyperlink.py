@@ -3,6 +3,7 @@
 More info: https://stackoverflow.com/questions/3402110/hyperlink-in-tkinter-text-widget#3404849'''
 
 import os
+import sys
 from tkinter import *
 
 class Hyperlink:
@@ -29,7 +30,29 @@ class Hyperlink:
         pid = os.fork()
         if pid == 0: return
 
-        os.execlp('firefox', 'firefox', link)
+        browsers = [
+            'xdg-open',
+            'firefox',
+            'chromium',
+            'chrome',
+            'google-chrome-stable',
+            'uzbl',
+            'surf',
+        ]
+
+        try:
+            for program in browsers:
+                try:
+                    os.execlp(program, program, link)
+                except FileNotFoundError:
+                    pass  # Try the next one
+        finally:
+            print('Failed to launch web browser')
+            # Should be a sys.exit(1) here, but xcb complains that we're
+            # multi-threading and crashes the program if we don't successfully
+            # exec something, so I use /bin/false for now
+            os.execl('/bin/false', '/bin/false')
+
 
 
     def add(self, index, text, action=None):
