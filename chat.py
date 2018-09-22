@@ -9,6 +9,7 @@ from tkinter.scrolledtext import ScrolledText
 import _tkinter
 
 from util import timestamp, Socket
+from hyperlink import Hyperlink
 
 flexim_header = b'\0FLEX'
 
@@ -115,6 +116,7 @@ class ChatWindow(Tk):
         self.chat_Text = ScrolledText(self.main)
         self.chat_Text.pack(expand=True, fill=BOTH)
         self.chat_Text['height'] = 10
+        self.chat_Hyperlink = Hyperlink(self.chat_Text)
 
         self.send_Frame = Frame(self.main)
         self.send_Frame.pack(fill=X)
@@ -160,7 +162,33 @@ class ChatWindow(Tk):
     def append_text(self, text):
         scroll = self.chat_Text.yview()[1]
 
-        self.chat_Text.insert(END, text)
+        # find hyperlinks and link them
+        i = text.find('http://')
+        if i < 0: i = text.find('https://')
+
+        if i >= 0:
+            self.append_text(text[:i])
+            text = text[i:]
+
+            # find the end of the link text
+            i = text.find(' ')
+            j = text.find('\n')
+
+            if i < 0:
+                i = j
+            elif i >= 0 and j >= 0:
+                i = min(i, j)
+
+            if i >= 0:
+                self.chat_Hyperlink.add(END, text[:i])
+                self.append_text(text[i:])
+            else:
+                self.chat_Hyperlink.add(END, text)
+
+        else:
+            self.chat_Text.insert(END, text)
+
+
         if scroll >= 0.99:
             self.chat_Text.yview_moveto(1.0)
 
