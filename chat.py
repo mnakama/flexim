@@ -77,6 +77,7 @@ class ChatWindow(Tk):
         if peer:
             self.peer.host, self.peer.port = peer
 
+        self.nick = 'me'
         self.mode = Mode.msgpack
         self.sent_header = False
         self.address = address
@@ -242,6 +243,12 @@ class ChatWindow(Tk):
         if text[0] == '/' and not text.startswith('/me '):
             if text == '/bye':
                 self.send_command('BYE ')
+            elif text.startswith('/nick'):
+                name = text[6:]
+                if len(name):
+                    self.send_command('NICK{}'.format(name))
+                    self.nick = name
+                    self.append_text('You are now known as {}\n'.format(name))
             elif text == '/text':
                 self.send_command('TEXT')
                 self.send_mode = Mode.text
@@ -272,7 +279,7 @@ class ChatWindow(Tk):
                 elif self.send_mode == Mode.msgpack:
                     message = msgpack.dumps(p)
 
-            self.append_text(timestamp() + ' me: ' + text + '\n')
+            self.append_text('{} {}: {}\n'.format(timestamp(), self.nick, text))
             self.peer.sendall(message)
 
         # Prevent default handler from adding a newline to the input textbox
@@ -363,6 +370,20 @@ class ChatWindow(Tk):
             self.unpacker = None
             self.receive_mode = Mode.text
 
+        elif cmd.startswith('NICK'):
+            oldnick = self.peer.nick
+            if more:
+                nick = more.strip()
+            else:
+                nick = cmd[4:].strip()
+
+            if nick not in ('me', '', self.nick):
+                self.peer.nick = nick
+                self.append_text('{} is now known as {}\n'.format(oldnick, self.peer.nick))
+            else:
+                self.append_text('{} tried to take the name {}, but that would be confusing.\n'.format(oldnick, nick))
+
+
         elif cmd == 'BYE ':
             self.disable('Disconnecting: Bye\n')
             self.disconnect()
@@ -372,13 +393,13 @@ class ChatWindow(Tk):
             p = packet.split(b'\0', 1)
             if p[0]:
                 text = str(p[0], encoding='utf8')
-                self.append_text(timestamp() + ' them: ' + text)
+                self.append_text('{} {}: {}'.format(timestamp(), self.peer.nick, text))
 
             if len(p) > 1:
                 cmd = p[1][:4]
                 more = p[1][4:]
 
-                self.process_command(str(cmd, encoding='ascii'), more)
+                self.process_command(str(cmd, encoding='ascii'), str(more, encoding='utf8'))
 
         elif self.receive_mode == Mode.json:
             message = json.loads(str(packet, encoding='utf8'))
