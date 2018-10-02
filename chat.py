@@ -420,6 +420,7 @@ class ChatWindow(Tk):
             except Exception as e:
                 self.disable(str(e) + '\n')
                 self.disconnect()
+                traceback.print_exc()
                 return
 
             print('packet:', packet, len(packet))
