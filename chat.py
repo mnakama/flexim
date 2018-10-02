@@ -11,6 +11,8 @@ import _tkinter
 from util import timestamp, Socket
 from hyperlink import Hyperlink
 
+_test_fragment = False
+
 class Mode(Enum):
     text = 1
     command = 2
@@ -146,31 +148,51 @@ class Msgpack(Datum):
 
     def __init__(self):
         self.unpacker = msgpack.Unpacker(raw=False)
+        self.datum_len = 0
+        self.rbuff = b''
+        self.buffer = []
 
 
     def command(self, cmd):
         data = self.command_data(cmd)
 
-        message = msgpack.dumps(data)
-        return message
+        p = msgpack.dumps(data)
+        return len(p).to_bytes(2, 'big') + p
 
 
     def header(self, header):
-        return msgpack.dumps(header)
+        p = msgpack.dumps(header)
+        return len(p).to_bytes(2, 'big') + p
 
 
     def message(self, msg):
-        p = self.message_data(msg)
-        return msgpack.dumps(p)
+        p = msgpack.dumps(self.message_data(msg))
+        return len(p).to_bytes(2, 'big') + p
 
 
     def feed(self, packet):
-        self.unpacker.feed(packet)
+        self.rbuff = self.rbuff + packet
+
+        while len(self.rbuff):
+            #print('rbuff:', self.rbuff)
+            if not self.datum_len:
+                self.datum_len = int.from_bytes(self.rbuff[:2], 'big')
+                self.rbuff = self.rbuff[2:]
+
+            if len(self.rbuff) >= self.datum_len:
+                self.buffer.append(self.rbuff[:self.datum_len])
+                self.rbuff = self.rbuff[self.datum_len:]
+                self.datum_len = 0
+            else:
+                break
 
 
     def read(self):
-        return self.unpacker
-
+        while len(self.buffer):
+            p = self.buffer.pop(0)
+            datum = msgpack.loads(p, raw=False)
+            print('loads:', datum)
+            yield datum
 
 
 class Peer():
@@ -217,6 +239,7 @@ class Peer():
         try:
             self.sock.settimeout(5)
             self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
             self.sock.connect((self.host, self.port))
             self.sock.settimeout(None)
         except Exception as e:
@@ -238,6 +261,8 @@ class ChatWindow(Tk):
         self.address = address
 
         if sock:
+            sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
+
             self.peer.sock = sock
             self.initiator = False
 
@@ -438,10 +463,20 @@ class ChatWindow(Tk):
             else:
                 self.append_text('Unrecognized command: {}\n'.format(text))
         else:
+            self.append_text('{} {}: {}\n'.format(timestamp(), self.nick, text))
+
             msg = self.send_proto.message(text)
 
-            self.append_text('{} {}: {}\n'.format(timestamp(), self.nick, text))
-            self.peer.sendall(msg)
+            if _test_fragment:
+                t = len(msg)
+                h = t // 2
+
+                self.peer.sendall(msg[:h])
+                time.sleep(0.1)
+                self.peer.sendall(msg[h:])
+            else:
+                self.peer.sendall(msg)
+
 
         # Prevent default handler from adding a newline to the input textbox
         return 'break'
@@ -479,9 +514,6 @@ class ChatWindow(Tk):
 
 
     def process_message(self, message):
-        if self.receive_mode == Mode.msgpack:
-            print('loads:', message)
-
         if 'to' in message:
             self.process_header(message)
 
