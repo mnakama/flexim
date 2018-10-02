@@ -74,6 +74,9 @@ class PText(Protocol):
                 self.buffer.append(datum)
                 self.rbuff = self.rbuff[n+1:]
 
+            else:
+                break
+
 
     def read(self):
         while len(self.buffer):
