@@ -18,6 +18,158 @@ class Mode(Enum):
     msgpack = 4
 
 
+class Protocol():
+    pass
+
+
+class PText(Protocol):
+    first_packet =b'\0FLEX'
+    mode = Mode.text
+
+    def __init__(self):
+        self.rbuff = b''
+        self.buffer = []
+
+
+    def command(self, cmd):
+        return b'\0' + cmd.encode(encoding='ascii')
+
+
+    def header(self, header):
+        return self.command('FROM' + header['from'] + '\n')
+
+
+    def message(self, msg):
+        return (msg + '\r').encode(encoding='utf8')
+
+
+    def feed(self, packet):
+        self.rbuff = self.rbuff + packet
+
+        while len(self.rbuff):
+            z = self.rbuff.find(b'\0')
+            n = self.rbuff.find(b'\r')
+
+            if z >= 0 and (n == -1 or z < n):
+                text = str(self.rbuff[z+1:], encoding='utf8')
+
+                datum = {
+                    'category': 'command',
+                    'subject': '',
+                    'message': text,
+                }
+
+                self.buffer.append(datum)
+                self.rbuff = b''
+
+            elif n >= 0:
+                text = str(self.rbuff[:n], encoding='utf8')
+
+                datum = {
+                    'category': 'chat',
+                    'subject': '',
+                    'message': text,
+                }
+
+                self.buffer.append(datum)
+                self.rbuff = self.rbuff[n+1:]
+
+
+    def read(self):
+        while len(self.buffer):
+            p = self.buffer.pop(0)
+            yield p
+
+
+class Datum(Protocol):
+    def command_data(self, cmd):
+        data = {
+            'category': 'command',
+            'flags': [],
+            'date': int(time.time()),
+            'message': str(cmd),
+        }
+
+        return data
+
+
+    def message_data(self, msg):
+        p = {
+            'category': 'chat',
+            'subject': '',
+            'flags': [],
+            'date': int(time.time()),
+            'message': msg,
+        }
+        return p
+
+
+class JSON(Datum):
+    first_packet = b'"FLEX'
+    mode = Mode.json
+
+    def __init__(self):
+        self.buffer = []
+
+
+    def command(self, cmd):
+        data = self.command_data(cmd)
+
+        message = json.dumps(data).encode(encoding='ascii')
+        return message
+
+    def header(self, header):
+        json.dumps(header).encode(encoding='utf8')
+
+
+    def message(self, msg):
+        p = self.message_data(msg)
+        return json.dumps(p).encode(encoding='utf8')
+
+
+    def feed(self, packet):
+        self.buffer.append(json.loads(str(packet, encoding='utf8')))
+
+
+    def read(self):
+        for p in self.buffer:
+            self.buffer = self.buffer[1:]
+            yield p
+
+
+class Msgpack(Datum):
+    first_packet = b'\xa4FLEX'
+    mode = Mode.msgpack
+
+    def __init__(self):
+        self.unpacker = msgpack.Unpacker(raw=False)
+
+
+    def command(self, cmd):
+        data = self.command_data(cmd)
+
+        message = msgpack.dumps(data)
+        return message
+
+
+    def header(self, header):
+        return msgpack.dumps(header)
+
+
+    def message(self, msg):
+        p = self.message_data(msg)
+        return msgpack.dumps(p)
+
+
+    def feed(self, packet):
+        self.unpacker.feed(packet)
+
+
+    def read(self):
+        return self.unpacker
+
+
+
 class Peer():
     def __init__(self):
         self._name = None
@@ -171,17 +323,36 @@ class ChatWindow(Tk):
 
     @property
     def receive_mode(self):
-        return self._receive_mode
+        return self.receive_proto.mode
 
 
     @receive_mode.setter
     def receive_mode(self, mode):
         if mode == Mode.msgpack:
-            self.unpacker = msgpack.Unpacker(raw=False)
+            self.receive_proto = Msgpack()
+        elif mode == Mode.json:
+            self.receive_proto = JSON()
+        elif mode == Mode.text:
+            self.receive_proto = PText()
         else:
-            self.unpacker = None
+            raise ValueError('Unknown protocol mode: {}'.format(mode))
 
-        self._receive_mode = mode
+
+    @property
+    def send_mode(self):
+        return self.send_proto.mode
+
+
+    @send_mode.setter
+    def send_mode(self, mode):
+        if mode == Mode.msgpack:
+            self.send_proto = Msgpack()
+        elif mode == Mode.json:
+            self.send_proto = JSON()
+        elif mode == Mode.text:
+            self.send_proto = PText()
+        else:
+            raise ValueError('Unknown protocol mode: {}'.format(mode))
 
 
     def send_Newline(self, *args):
@@ -252,6 +423,7 @@ class ChatWindow(Tk):
             elif text == '/text':
                 self.send_command('TEXT')
                 self.send_mode = Mode.text
+                self.send_header_once()
             elif text == '/json':
                 self.send_command('JSON')
                 self.send_mode = Mode.json
@@ -263,46 +435,18 @@ class ChatWindow(Tk):
             else:
                 self.append_text('Unrecognized command: {}\n'.format(text))
         else:
-            if self.send_mode == Mode.text:
-                message = (text + '\n').encode(encoding='utf8')
-            elif self.send_mode in (Mode.json, Mode.msgpack):
-                p = {
-                    'category': 'chat',
-                    'subject': '',
-                    'flags': [],
-                    'date': int(time.time()),
-                    'message': text,
-                }
-
-                if self.send_mode == Mode.json:
-                    message = json.dumps(p).encode(encoding='utf8')
-                elif self.send_mode == Mode.msgpack:
-                    message = msgpack.dumps(p)
+            msg = self.send_proto.message(text)
 
             self.append_text('{} {}: {}\n'.format(timestamp(), self.nick, text))
-            self.peer.sendall(message)
+            self.peer.sendall(msg)
 
         # Prevent default handler from adding a newline to the input textbox
         return 'break'
 
 
     def send_command(self, cmd):
-        if self.send_mode == Mode.text:
-            self.peer.sendall(b'\0' + cmd.encode(encoding='ascii'))
-        elif self.send_mode in (Mode.json, Mode.msgpack):
-            data = {
-                'category': 'command',
-                'flags': [],
-                'date': int(time.time()),
-                'message': str(cmd),
-            }
-
-            if self.send_mode == Mode.json:
-                message = json.dumps(data).encode(encoding='ascii')
-            elif self.send_mode == Mode.msgpack:
-                message = msgpack.dumps(data)
-
-            self.peer.sendall(message)
+        message = self.send_proto.command(cmd)
+        self.peer.sendall(message)
 
 
     def send_header_once(self):
@@ -318,13 +462,8 @@ class ChatWindow(Tk):
             'options': [],
         }
 
-        if self.send_mode == Mode.json:
-            p = json.dumps(data).encode(encoding='utf8')
-            self.peer.sendall(p)
-
-        elif self.send_mode == Mode.msgpack:
-            p = msgpack.dumps(data)
-            self.peer.sendall(p)
+        p = self.send_proto.header(data)
+        self.peer.sendall(p)
 
 
     def update_peer_address(self, addr):
@@ -337,7 +476,8 @@ class ChatWindow(Tk):
 
 
     def process_message(self, message):
-        print('loads:', message)
+        if self.receive_mode == Mode.msgpack:
+            print('loads:', message)
 
         if 'to' in message:
             self.process_header(message)
@@ -353,7 +493,6 @@ class ChatWindow(Tk):
 
     def process_command(self, cmd, more=None):
         if cmd == 'JSON':
-            self.unpacker = None
             self.receive_mode = Mode.json
 
             if more:
@@ -361,13 +500,11 @@ class ChatWindow(Tk):
 
         elif cmd == 'MPCK':
             self.receive_mode = Mode.msgpack
-            self.unpacker = msgpack.Unpacker(raw=False)
 
             if more:
                 self.process_packet(more)
 
         elif cmd == 'TEXT':
-            self.unpacker = None
             self.receive_mode = Mode.text
 
         elif cmd.startswith('NICK'):
@@ -383,34 +520,19 @@ class ChatWindow(Tk):
             else:
                 self.append_text('{} tried to take the name {}, but that would be confusing.\n'.format(oldnick, nick))
 
-
         elif cmd == 'BYE ':
             self.disable('Disconnecting: Bye\n')
             self.disconnect()
 
+        else:
+            self.append_text('Unrecognized command: {}'.format(cmd))
+
     def process_packet(self, packet):
-        if self.receive_mode == Mode.text:
-            p = packet.split(b'\0', 1)
-            if p[0]:
-                text = str(p[0], encoding='utf8')
-                self.append_text('{} {}: {}'.format(timestamp(), self.peer.nick, text))
+        self.receive_proto.feed(packet)
 
-            if len(p) > 1:
-                cmd = p[1][:4]
-                more = p[1][4:]
-
-                self.process_command(str(cmd, encoding='ascii'), str(more, encoding='utf8'))
-
-        elif self.receive_mode == Mode.json:
-            message = json.loads(str(packet, encoding='utf8'))
-
-            self.process_message(message)
-
-        elif self.receive_mode == Mode.msgpack:
-            self.unpacker.feed(packet)
-
-            for o in self.unpacker:
-                self.process_message(o)
+        i = self.receive_proto.read()
+        for o in i:
+            self.process_message(o)
 
 
     def eventChecker(self, *args): #could be (self, socket_fd, mask)
@@ -436,17 +558,10 @@ class ChatWindow(Tk):
 
     def connect(self):
         self.peer.connect()
-        if self.send_mode == Mode.msgpack:
-            header = b'\xa4FLEX'
-            self.peer.send(header)
-            self.send_header_once()
-        elif self.send_mode == Mode.json:
-            header = b'"FLEX'
-            self.peer.send(header)
-            self.send_header_once()
-        else:
-            header = b'\0FLEX'
-            self.peer.send(header)
+
+        header = self.send_proto.first_packet
+        self.peer.send(header)
+        self.send_header_once()
 
 
     def disconnect(self):
