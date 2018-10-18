@@ -20,6 +20,15 @@ class Mode(Enum):
     msgpack = 4
 
 
+class Datum(Enum):
+    Request = 0
+    Acknowledge = 1
+    Connection = 2
+    Message = 3
+    Auth = 4
+    Register = 5
+
+
 class Protocol():
     pass
 
@@ -86,7 +95,7 @@ class PText(Protocol):
             yield p
 
 
-class Datum(Protocol):
+class PDatum(Protocol):
     def command_data(self, cmd):
         data = {
             'category': 'command',
@@ -109,7 +118,7 @@ class Datum(Protocol):
         return p
 
 
-class JSON(Datum):
+class JSON(PDatum):
     first_packet = b'"FLEX'
     mode = Mode.json
 
@@ -142,7 +151,7 @@ class JSON(Datum):
             yield p
 
 
-class Msgpack(Datum):
+class Msgpack(PDatum):
     first_packet = b'\xa4FLEX'
     mode = Mode.msgpack
 
@@ -157,17 +166,17 @@ class Msgpack(Datum):
         data = self.command_data(cmd)
 
         p = msgpack.dumps(data)
-        return len(p).to_bytes(2, 'big') + p
+        return len(p).to_bytes(2, 'big') + Datum.Message.value.to_bytes(1, 'big') + p
 
 
     def header(self, header):
         p = msgpack.dumps(header)
-        return len(p).to_bytes(2, 'big') + p
+        return len(p).to_bytes(2, 'big') + Datum.Request.value.to_bytes(1, 'big') + p
 
 
     def message(self, msg):
         p = msgpack.dumps(self.message_data(msg))
-        return len(p).to_bytes(2, 'big') + p
+        return len(p).to_bytes(2, 'big') + Datum.Message.value.to_bytes(1, 'big') + p
 
 
     def feed(self, packet):
@@ -177,12 +186,14 @@ class Msgpack(Datum):
             #print('rbuff:', self.rbuff)
             if not self.datum_len:
                 self.datum_len = int.from_bytes(self.rbuff[:2], 'big')
-                self.rbuff = self.rbuff[2:]
+                self.datum_type = int.from_bytes(self.rbuff[2:3], 'big')
+                self.rbuff = self.rbuff[3:]
 
             if len(self.rbuff) >= self.datum_len:
                 self.buffer.append(self.rbuff[:self.datum_len])
                 self.rbuff = self.rbuff[self.datum_len:]
                 self.datum_len = 0
+                self.datum_type = None
             else:
                 break
 
