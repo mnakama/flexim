@@ -21,12 +21,12 @@ class Mode(Enum):
 
 
 class Datum(Enum):
-    Request = 0
-    Acknowledge = 1
-    Connection = 2
+    Auth = 0
+    AuthResponse = 1
+    Command = 2
     Message = 3
-    Auth = 4
-    Register = 5
+    Roster = 4
+    User = 5
 
 
 class Protocol():
@@ -42,15 +42,18 @@ class PText(Protocol):
         self.buffer = []
 
 
-    def command(self, cmd):
-        return b'\0' + cmd.encode(encoding='ascii')
+    def command(self, cmd, data=None):
+        if not data:
+            return b'\0' + cmd.encode(encoding='ascii')
+        else:
+            return b'\0' + cmd.encode(encoding='ascii') + data.encode(encoding='utf8')
 
 
     def header(self, header):
         return self.command('FROM' + header['from'] + '\n')
 
 
-    def message(self, msg):
+    def message(self, msg, **kwargs):
         return (msg + '\r').encode(encoding='utf8')
 
 
@@ -65,9 +68,8 @@ class PText(Protocol):
                 text = str(self.rbuff[z+1:], encoding='utf8')
 
                 datum = {
-                    'category': 'command',
-                    'subject': '',
-                    'message': text,
+                    'cmd': text,
+                    'payload': None,
                 }
 
                 self.buffer.append(datum)
@@ -77,9 +79,11 @@ class PText(Protocol):
                 text = str(self.rbuff[:n], encoding='utf8')
 
                 datum = {
-                    'category': 'chat',
-                    'subject': '',
-                    'message': text,
+                    'to': '',
+                    'from': '',
+                    'flags': [],
+                    'date': int(time.time()),
+                    'msg': text,
                 }
 
                 self.buffer.append(datum)
@@ -96,24 +100,22 @@ class PText(Protocol):
 
 
 class PDatum(Protocol):
-    def command_data(self, cmd):
+    def command_data(self, cmd, data=None):
         data = {
-            'category': 'command',
-            'flags': [],
-            'date': int(time.time()),
-            'message': str(cmd),
+            'cmd': str(cmd),
+            'payload': data,
         }
 
         return data
 
 
-    def message_data(self, msg):
+    def message_data(self, msg, to='', From=''):
         p = {
-            'category': 'chat',
-            'subject': '',
+            'to': to,
+            'from': From,
             'flags': [],
             'date': int(time.time()),
-            'message': msg,
+            'msg': msg,
         }
         return p
 
@@ -126,8 +128,8 @@ class JSON(PDatum):
         self.buffer = []
 
 
-    def command(self, cmd):
-        data = self.command_data(cmd)
+    def command(self, cmd, data=None):
+        data = self.command_data(cmd, data=data)
 
         message = json.dumps(data).encode(encoding='ascii')
         return message
@@ -136,8 +138,8 @@ class JSON(PDatum):
         json.dumps(header).encode(encoding='utf8')
 
 
-    def message(self, msg):
-        p = self.message_data(msg)
+    def message(self, msg, **kwargs):
+        p = self.message_data(msg, **kwargs)
         return json.dumps(p).encode(encoding='utf8')
 
 
@@ -162,20 +164,19 @@ class Msgpack(PDatum):
         self.buffer = []
 
 
-    def command(self, cmd):
-        data = self.command_data(cmd)
+    def command(self, cmd, data=None):
+        data = self.command_data(cmd, data=data)
 
         p = msgpack.dumps(data)
-        return len(p).to_bytes(2, 'big') + Datum.Message.value.to_bytes(1, 'big') + p
+        return len(p).to_bytes(2, 'big') + Datum.Command.value.to_bytes(1, 'big') + p
 
 
     def header(self, header):
-        p = msgpack.dumps(header)
-        return len(p).to_bytes(2, 'big') + Datum.Request.value.to_bytes(1, 'big') + p
+        return None
 
 
-    def message(self, msg):
-        p = msgpack.dumps(self.message_data(msg))
+    def message(self, msg, **kwargs):
+        p = msgpack.dumps(self.message_data(msg, **kwargs))
         return len(p).to_bytes(2, 'big') + Datum.Message.value.to_bytes(1, 'big') + p
 
 
@@ -190,7 +191,7 @@ class Msgpack(PDatum):
                 self.rbuff = self.rbuff[3:]
 
             if len(self.rbuff) >= self.datum_len:
-                self.buffer.append(self.rbuff[:self.datum_len])
+                self.buffer.append((self.datum_type, self.rbuff[:self.datum_len]))
                 self.rbuff = self.rbuff[self.datum_len:]
                 self.datum_len = 0
                 self.datum_type = None
@@ -200,9 +201,10 @@ class Msgpack(PDatum):
 
     def read(self):
         while len(self.buffer):
-            p = self.buffer.pop(0)
+            dnum, p = self.buffer.pop(0)
+            dtype = Datum(dnum)
             datum = msgpack.loads(p, raw=False)
-            print('loads:', datum)
+            print('loads:', dtype, datum)
             yield datum
 
 
@@ -456,7 +458,7 @@ class ChatWindow(Tk):
             elif text.startswith('/nick'):
                 name = text[6:]
                 if len(name):
-                    self.send_command('NICK{}'.format(name))
+                    self.send_command('NICK', data=name)
                     self.nick = name
                     self.append_text('You are now known as {}\n'.format(name))
             elif text == '/text':
@@ -476,7 +478,7 @@ class ChatWindow(Tk):
         else:
             self.append_text('{} {}: {}\n'.format(timestamp(), self.nick, text))
 
-            msg = self.send_proto.message(text)
+            msg = self.send_proto.message(text, to=self.peer.name, From=str(self.address or ''))
 
             if _test_fragment:
                 t = len(msg)
@@ -493,8 +495,8 @@ class ChatWindow(Tk):
         return 'break'
 
 
-    def send_command(self, cmd):
-        message = self.send_proto.command(cmd)
+    def send_command(self, cmd, data=None):
+        message = self.send_proto.command(cmd, data=data)
         self.peer.sendall(message)
 
 
@@ -512,7 +514,8 @@ class ChatWindow(Tk):
         }
 
         p = self.send_proto.header(data)
-        self.peer.sendall(p)
+        if p is not None:
+            self.peer.sendall(p)
 
 
     def update_peer_address(self, addr):
@@ -525,16 +528,19 @@ class ChatWindow(Tk):
 
 
     def process_message(self, message):
-        if 'to' in message:
+        if 'to' in message and 'msg' not in message:
             self.process_header(message)
 
-        elif message['category'] == 'command':
-            print('command:', message['message'])
-            cmd = message['message']
-            self.process_command(cmd)
+        elif 'cmd' in message:
+            print('command:', message['cmd'], message['payload'])
+            cmd = message['cmd']
+            self.process_command(cmd, more=message['payload'])
 
         else:
-            self.append_text('{} {}: {}\n'.format(timestamp(), self.peer.nick, message['message']))
+            if message['from']:
+                self.update_peer_address(message['from'])
+
+            self.append_text('{} {}: {}\n'.format(timestamp(), self.peer.nick, message['msg']))
 
 
     def process_command(self, cmd, more=None):
