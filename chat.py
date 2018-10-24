@@ -168,7 +168,7 @@ class Msgpack(PDatum):
         data = self.command_data(cmd, data=data)
 
         p = msgpack.dumps(data)
-        return len(p).to_bytes(2, 'big') + Datum.Command.value.to_bytes(1, 'big') + p
+        return Datum.Command.value.to_bytes(1, 'big') + len(p).to_bytes(2, 'big') + p
 
 
     def header(self, header):
@@ -177,7 +177,7 @@ class Msgpack(PDatum):
 
     def message(self, msg, **kwargs):
         p = msgpack.dumps(self.message_data(msg, **kwargs))
-        return len(p).to_bytes(2, 'big') + Datum.Message.value.to_bytes(1, 'big') + p
+        return Datum.Message.value.to_bytes(1, 'big') + len(p).to_bytes(2, 'big') + p
 
 
     def feed(self, packet):
@@ -186,8 +186,8 @@ class Msgpack(PDatum):
         while len(self.rbuff):
             #print('rbuff:', self.rbuff)
             if not self.datum_len:
-                self.datum_len = int.from_bytes(self.rbuff[:2], 'big')
-                self.datum_type = int.from_bytes(self.rbuff[2:3], 'big')
+                self.datum_type = int.from_bytes(self.rbuff[0:1], 'big')
+                self.datum_len = int.from_bytes(self.rbuff[1:3], 'big')
                 self.rbuff = self.rbuff[3:]
 
             if len(self.rbuff) >= self.datum_len:
